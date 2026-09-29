@@ -7,7 +7,14 @@ import time
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 
-from .base import MemoryBackend, SearchResult, EntityNode, GraphInfo, EpisodeResult
+from .base import (
+    MemoryBackend,
+    SearchResult,
+    EntityNode,
+    GraphInfo,
+    EpisodeResult,
+    FilteredEntities,
+)
 from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
@@ -423,10 +430,18 @@ class ZepBackend(MemoryBackend):
                 return f"entity_{attr_name}"
             return attr_name
 
+        def to_pascal_case(s: str) -> str:
+            """Convertir cadena a formato PascalCase para validación de Zep API"""
+            if not s:
+                return "Entity"
+            words = s.replace("-", "_").split("_")
+            res = "".join(w.capitalize() for w in words if w)
+            return res or "Entity"
+
         # Crear tipos de entidad dinámicamente
         entity_types = {}
         for entity_def in ontology.get("entity_types", []):
-            name = entity_def["name"]
+            name = to_pascal_case(entity_def["name"])
             description = entity_def.get("description", f"A {name} entity.")
 
             attrs = {"__doc__": description}
@@ -446,7 +461,9 @@ class ZepBackend(MemoryBackend):
         # Crear tipos de borde dinámicamente
         edge_definitions = {}
         for edge_def in ontology.get("edge_types", []):
-            name = edge_def["name"]
+            raw_name = edge_def["name"]
+            class_name = to_pascal_case(raw_name)
+            name = class_name
             description = edge_def.get("description", f"A {name} relationship.")
 
             attrs = {"__doc__": description}
@@ -460,7 +477,6 @@ class ZepBackend(MemoryBackend):
 
             attrs["__annotations__"] = annotations
 
-            class_name = "".join(word.capitalize() for word in name.split("_"))
             edge_class = type(class_name, (EdgeModel,), attrs)
             edge_class.__doc__ = description
 
@@ -468,10 +484,12 @@ class ZepBackend(MemoryBackend):
 
             source_targets = []
             for st in edge_def.get("source_targets", []):
+                src = to_pascal_case(st.get("source", "Entity"))
+                tgt = to_pascal_case(st.get("target", "Entity"))
                 source_targets.append(
                     EntityEdgeSourceTarget(
-                        source=st.get("source", "Entity"),
-                        target=st.get("target", "Entity"),
+                        source=src,
+                        target=tgt,
                     )
                 )
 
@@ -505,3 +523,110 @@ class ZepBackend(MemoryBackend):
         Zep maneja índices internamente, este método es un no-op
         """
         return True
+
+    def get_graph_statistics(self, graph_id: str) -> Dict[str, Any]:
+        """Obtener estadísticas básicas del grafo Zep"""
+        entities = self.get_entities(graph_id=graph_id, enrich_with_edges=False)
+        edges = self.get_edges(graph_id=graph_id, include_temporal=False)
+        entity_types = list(set([e.get_entity_type() or "Entity" for e in entities]))
+        relation_types = list(set([e.get("name", "") for e in edges if e.get("name")]))
+        return {
+            "graph_id": graph_id,
+            "total_nodes": len(entities),
+            "total_edges": len(edges),
+            "entity_types": entity_types,
+            "relation_types": relation_types,
+        }
+
+    def get_entities_by_type(
+        self, graph_id: str, entity_type: str
+    ) -> List[Dict[str, Any]]:
+        """Obtener entidades por tipo en Zep"""
+        entities = self.get_entities(graph_id=graph_id, entity_types=[entity_type], enrich_with_edges=False)
+        return [
+            {
+                "uuid": e.uuid,
+                "name": e.name,
+                "entity_type": e.get_entity_type() or entity_type,
+                "created_at": None,
+            }
+            for e in entities
+        ]
+
+    def get_entity_summary(self, graph_id: str, entity_name: str) -> Dict[str, Any]:
+        """Obtener resumen de entidad con sus relaciones en Zep"""
+        entities = self.get_entities(graph_id=graph_id, enrich_with_edges=True)
+        target = next((e for e in entities if e.name.lower() == entity_name.lower()), None)
+        if not target:
+            return {"entity": None, "relationships": []}
+        return {
+            "entity": {
+                "name": target.name,
+                "entity_type": target.get_entity_type() or "Entity",
+                "uuid": target.uuid,
+            },
+            "relationships": [
+                {
+                    "type": edge.get("edge_name", "RELATES_TO"),
+                    "target": edge.get("target_node_uuid"),
+                }
+                for edge in target.related_edges
+            ],
+        }
+
+    def get_simulation_context(
+        self, graph_id: str, simulation_requirement: str, limit: int = 10
+    ) -> Dict[str, Any]:
+        """Obtener contexto de simulación para Zep"""
+        stats = self.get_graph_statistics(graph_id)
+        entities = self.get_entities(graph_id=graph_id, enrich_with_edges=False)
+        top_agents = entities[:limit]
+        return {
+            "graph_id": graph_id,
+            "statistics": stats,
+            "top_agents": [
+                {"name": a.name, "type": a.get_entity_type() or "Agent"}
+                for a in top_agents
+            ],
+            "simulation_requirement": simulation_requirement,
+            "llm_summary": f"Contexto para simulación con {len(top_agents)} agentes en grafo {graph_id}.",
+        }
+
+    def filter_defined_entities(
+        self,
+        graph_id: str,
+        defined_entity_types: Optional[List[str]] = None,
+        enrich_with_edges: bool = True,
+    ) -> FilteredEntities:
+        """
+        Filtrar nodos que coincidan con tipos de entidad predefinidos en Zep.
+        """
+        all_entities = self.get_entities(graph_id=graph_id, enrich_with_edges=enrich_with_edges)
+        total_count = len(all_entities)
+        filtered_entities = []
+        entity_types_found = set()
+
+        for entity in all_entities:
+            labels = entity.labels or []
+            custom_labels = [l for l in labels if l not in ["Entity", "Node"]]
+            if not custom_labels:
+                entity_type = entity.get_entity_type() or "Agent"
+            elif defined_entity_types:
+                matching_labels = [l for l in custom_labels if l in defined_entity_types]
+                if not matching_labels:
+                    continue
+                entity_type = matching_labels[0]
+            else:
+                entity_type = custom_labels[0]
+
+            entity_types_found.add(entity_type)
+            filtered_entities.append(entity)
+
+        return FilteredEntities(
+            entities=filtered_entities,
+            entity_types=entity_types_found,
+            total_count=total_count,
+            filtered_count=len(filtered_entities),
+        )
+
+

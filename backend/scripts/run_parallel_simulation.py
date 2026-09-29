@@ -1232,7 +1232,10 @@ async def run_twitter_simulation(
 
     db_path = os.path.join(simulation_dir, "twitter_simulation.db")
     if os.path.exists(db_path):
-        os.remove(db_path)
+        try:
+            os.remove(db_path)
+        except Exception:
+            pass
 
     result.env = oasis.make(
         agent_graph=result.agent_graph,
@@ -1430,7 +1433,10 @@ async def run_reddit_simulation(
 
     db_path = os.path.join(simulation_dir, "reddit_simulation.db")
     if os.path.exists(db_path):
-        os.remove(db_path)
+        try:
+            os.remove(db_path)
+        except Exception:
+            pass
 
     result.env = oasis.make(
         agent_graph=result.agent_graph,

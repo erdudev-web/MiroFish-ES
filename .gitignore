@@ -70,3 +70,6 @@ actualizar.sh
 # Translation temp files
 .translation-pending.txt
 scripts/translate_strings.py
+
+# Historiales de chat y exportaciones (pueden contener claves)
+historial_chat_*

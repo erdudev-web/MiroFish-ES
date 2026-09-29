@@ -575,10 +575,10 @@ class ReportAgent:
     """
 
     # MásgrandeHerramientallamada vecesnúmero（Cada capítulo）
-    MAX_TOOL_CALLS_PER_SECTION = 5
+    MAX_TOOL_CALLS_PER_SECTION = Config.REPORT_AGENT_MAX_TOOL_CALLS
 
     # Másgran reflexionrondasnúmero
-    MAX_REFLECTION_ROUNDS = 3
+    MAX_REFLECTION_ROUNDS = Config.REPORT_AGENT_MAX_REFLECTION_ROUNDS
 
     # Paraen el dialogoMásgrandeHerramientallamada vecesnúmero
     MAX_TOOL_CALLS_PER_CHAT = 2
@@ -1281,7 +1281,12 @@ class ReportAgent:
                             "report",
                             "react_observation",
                             tool_name=call["name"],
-                            result=result,
+                            result=(
+                                result
+                                if len(result) <= Config.REPORT_AGENT_MAX_TOOL_RESULT_CHARS
+                                else result[: Config.REPORT_AGENT_MAX_TOOL_RESULT_CHARS]
+                                + "\n...[resultado truncado para respetar el limite de tokens]"
+                            ),
                             tool_calls_count=tool_calls_count,
                             max_tool_calls=self.MAX_TOOL_CALLS_PER_SECTION,
                             used_tools_str=", ".join(used_tools),

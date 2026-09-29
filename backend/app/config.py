@@ -108,6 +108,10 @@ class Config:
     REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(
         os.environ.get("REPORT_AGENT_MAX_REFLECTION_ROUNDS", "2")
     )
+    # Limite de caracteres por resultado de herramienta enviado al LLM (evita 413/TPM en niveles gratuitos)
+    REPORT_AGENT_MAX_TOOL_RESULT_CHARS = int(
+        os.environ.get("REPORT_AGENT_MAX_TOOL_RESULT_CHARS", "6000")
+    )
     REPORT_AGENT_TEMPERATURE = float(os.environ.get("REPORT_AGENT_TEMPERATURE", "0.5"))
 
     @classmethod
