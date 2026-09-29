@@ -77,11 +77,11 @@ class Provider:
                 toks += t
         return reqs, toks
 
-    def wait_for(self, tokens, now):
+    def wait_for(self, tokens, now, size=None):
         """Segundos hasta poder enviar `tokens`; None si esperar no sirve (limite diario)."""
         if now < self.cooldown_until:
             return self.cooldown_until - now
-        if self.max_req and tokens > self.max_req * SAFETY:
+        if self.max_req and (size if size is not None else tokens) > self.max_req * SAFETY:
             return None
         r24, t24 = self.usage(now, DAY)
         if self.rpd and r24 + 1 > self.rpd * SAFETY:
@@ -148,6 +148,13 @@ def save_state():
     os.replace(tmp, STATE_PATH)
 
 
+def estimate_input(body):
+    text = json.dumps(body.get("messages", []), ensure_ascii=False)
+    if body.get("tools"):
+        text += json.dumps(body["tools"], ensure_ascii=False)
+    return int(len(text) / 3.2)
+
+
 def estimate_tokens(body):
     text = json.dumps(body.get("messages", []), ensure_ascii=False)
     if body.get("tools"):
@@ -156,7 +163,7 @@ def estimate_tokens(body):
     return int(len(text) / 3.2) + min(int(out), 1500)
 
 
-def pick(tokens, exclude):
+def pick(tokens, exclude, size=None):
     """Devuelve (provider, wait). provider=None y wait=None -> sin capacidad diaria."""
     now = time.time()
     best, best_wait, soonest = None, None, None
@@ -164,7 +171,7 @@ def pick(tokens, exclude):
         for p in PROVIDERS:
             if not p.enabled or p.name in exclude:
                 continue
-            w = p.wait_for(tokens, now)
+            w = p.wait_for(tokens, now, size)
             if w is None:
                 continue
             if w == 0:
@@ -186,8 +193,43 @@ def record(p, tokens):
         save_state()
 
 
-def forward(p, body):
+def sanitize_tools(payload):
+    """Normaliza esquemas de herramientas para proveedores estrictos (p. ej. Groq).
+
+    Algunos clientes (camel/OASIS) envian parametros con 'required' pero sin
+    'properties'; Groq responde 400. Se completa 'properties' y se descarta un
+    'required' vacio o invalido.
+    """
+    tools = payload.get("tools")
+    if not tools:
+        return
+    fixed = []
+    for t in tools:
+        fn = t.get("function") if isinstance(t, dict) else None
+        params = fn.get("parameters") if isinstance(fn, dict) else None
+        if isinstance(params, dict):
+            params = dict(params)
+            if params.get("type") == "object" or "type" not in params:
+                params.setdefault("type", "object")
+                if not isinstance(params.get("properties"), dict):
+                    params["properties"] = {}
+                req = params.get("required")
+                if not isinstance(req, list) or not req:
+                    params.pop("required", None)
+            t = {**t, "function": {**fn, "parameters": params}}
+        fixed.append(t)
+    payload["tools"] = fixed
+
+
+def forward(p, body, inp=0):
     payload = dict(body)
+    sanitize_tools(payload)
+    # Ajusta max_tokens para que entrada + salida quepan en el limite por peticion del proveedor
+    if p.max_req:
+        req = payload.get("max_tokens") or payload.get("max_completion_tokens") or 1024
+        room = int(p.max_req * 0.97) - inp
+        payload.pop("max_completion_tokens", None)
+        payload["max_tokens"] = max(200, min(int(req), room))
     payload["model"] = p.model
     payload["stream"] = False
     payload.pop("stream_options", None)
@@ -196,6 +238,7 @@ def forward(p, body):
 
 
 def error(status, msg, reason, retry_after=None):
+    print(f"[router] {status} {reason}: {msg}", file=sys.stderr, flush=True)
     resp = jsonify({"error": {"message": msg, "type": reason, "code": status}})
     resp.status_code = status
     resp.headers["X-Router-Reason"] = reason
@@ -209,13 +252,14 @@ def chat():
     body = request.get_json(force=True)
     want_stream = bool(body.get("stream"))
     tokens = estimate_tokens(body)
+    inp = estimate_input(body)
     if TOTAL_TOKEN_CAP and TOTAL_USED + tokens > TOTAL_TOKEN_CAP:
         return error(429, "Tope global de tokens del enrutador alcanzado", "global_cap", 3600)
 
     tried, deadline = set(), time.time() + MAX_WAIT
     last = None
     for _ in range(8):
-        p, wait = pick(tokens, tried)
+        p, wait = pick(tokens, tried, inp + 400)
         if p is None:
             if wait is None:
                 reason = "daily_budget_or_size"
@@ -225,7 +269,7 @@ def chat():
             time.sleep(wait)
             continue
         try:
-            r = forward(p, body)
+            r = forward(p, body, inp)
         except httpx.HTTPError as e:
             p.errors += 1
             p.cooldown_until = time.time() + 20
