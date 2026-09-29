@@ -73,3 +73,6 @@ scripts/translate_strings.py
 
 # Historiales de chat y exportaciones (pueden contener claves)
 historial_chat_*
+backend/scripts/router_state.json
+backend/scripts/providers.json
+.env.local

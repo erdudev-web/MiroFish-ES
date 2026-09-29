@@ -1,0 +1,13 @@
+{
+  "_nota": "Limites gratuitos declarados por cada proveedor (consultados el 28-sep-2026). Cambian con frecuencia: verifica en cada consola. Las claves van en variables de entorno, no aqui.",
+  "providers": [
+    {"name": "cerebras_120b", "base_url": "https://api.cerebras.ai/v1", "key_env": "CEREBRAS_API_KEY",
+     "model": "gpt-oss-120b", "rpm": 5, "tpm": 30000, "tpd": 1000000, "max_req_tokens": 28000, "priority": 1},
+    {"name": "groq_gpt_oss_120b", "base_url": "https://api.groq.com/openai/v1", "key_env": "GROQ_API_KEY",
+     "model": "openai/gpt-oss-120b", "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 200000, "max_req_tokens": 7000, "priority": 2},
+    {"name": "groq_gpt_oss_20b", "base_url": "https://api.groq.com/openai/v1", "key_env": "GROQ_API_KEY",
+     "model": "openai/gpt-oss-20b", "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 200000, "max_req_tokens": 7000, "priority": 3},
+    {"name": "openrouter_free", "base_url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY",
+     "model": "openrouter/free", "rpm": 20, "rpd": 50, "max_req_tokens": 30000, "priority": 4}
+  ]
+}
